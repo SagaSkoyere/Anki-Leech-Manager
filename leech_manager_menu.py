@@ -170,6 +170,72 @@ def filter_by_age(browser: Browser):
         showCritical(error_msg)
 
 
+def filter_by_days_reviewed(browser: Browser):
+    """Filter browser by number of unique days a card has been reviewed."""
+    logger.info("Filter by #Days Reviewed action triggered")
+
+    try:
+        # Prompt user for minimum days reviewed with QInputDialog
+        days, ok = QInputDialog.getInt(
+            browser,
+            "Filter by #Days Reviewed",
+            "Show cards with >= X days reviewed:",
+            7,      # default value
+            0,      # minimum
+            10000,  # maximum
+            1       # step
+        )
+
+        if not ok:
+            logger.info("User cancelled days reviewed filter")
+            return
+
+        logger.info(f"Filtering cards with >= {days} days reviewed")
+
+        # Use SQL to find card IDs matching criteria
+        # Count distinct calendar days that have reviews (using localtime)
+        query = """
+        SELECT DISTINCT c.id
+        FROM cards c
+        INNER JOIN revlog r ON c.id = r.cid
+        GROUP BY c.id
+        HAVING COUNT(DISTINCT date(r.id/1000.0, 'unixepoch', 'localtime')) >= ?
+        """
+
+        card_ids = mw.col.db.list(query, days)
+
+        if not card_ids:
+            showInfo(f"No cards found with >= {days} days reviewed")
+            return
+
+        # Get current browser search to preserve deck/filter context
+        current_search = browser.current_search()
+
+        # Construct search query with card IDs
+        # Use comma-separated card IDs (Anki supports: cid:123,456,789)
+        id_search = f"cid:{','.join(str(cid) for cid in card_ids)}"
+
+        # Combine with current search if it exists
+        if current_search and current_search.strip():
+            # Combine current search with days reviewed filter using AND
+            combined_search = f"({current_search}) AND ({id_search})"
+            logger.info(f"Combining with existing search: {current_search}")
+        else:
+            combined_search = id_search
+
+        # Apply the search to browser
+        browser.search_for(combined_search)
+
+        logger.info(f"Filtered to {len(card_ids)} cards with >= {days} days reviewed")
+        showInfo(f"Filtered to cards with >= {days} days reviewed")
+
+    except Exception as e:
+        error_msg = f"Error filtering by days reviewed: {str(e)}"
+        logger.error(error_msg)
+        logger.error(f"Full traceback: {leech_columns.traceback.format_exc()}")
+        showCritical(error_msg)
+
+
 def time_analysis(browser: Browser):
     """Analyze time spent on cards by percentile."""
     logger.info("Time analysis action triggered")
@@ -332,6 +398,12 @@ class LeechManagerMenu:
             filter_action.triggered.connect(lambda: filter_by_age(browser))
             filter_action.setToolTip("Filter browser to show cards with age >= specified days")
             leech_menu.addAction(filter_action)
+
+            # Add "Filter by #Days Reviewed" action
+            filter_days_reviewed_action = QAction("Filter by #Days Reviewed", browser)
+            filter_days_reviewed_action.triggered.connect(lambda: filter_by_days_reviewed(browser))
+            filter_days_reviewed_action.setToolTip("Filter browser to show cards reviewed on >= specified unique days")
+            leech_menu.addAction(filter_days_reviewed_action)
 
             # Add "Time Analysis" action
             time_analysis_action = QAction("Time Analysis", browser)
